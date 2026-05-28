@@ -221,7 +221,7 @@ public class MainActivity extends Activity {
                 // 算法 B：如果 a 标签是空的，利用正则表达式直接从网页文本中提取直连 URL
                 if (proxyUrl.isEmpty()) {
                     Pattern urlPattern = Pattern.compile("https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|]");
-                    Matcher urlMatcher = urlPattern.matcher(item.text());
+                    Matcher urlMatcher = urlPattern.matcher(item.outerHtml()); 
                     if (urlMatcher.find()) {
                         proxyUrl = urlMatcher.group();
                     }
