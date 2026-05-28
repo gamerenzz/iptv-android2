@@ -131,7 +131,9 @@ public class MainActivity extends Activity {
             } else {
                 // 第二页及后续页面，不需要注入JS搜索，直接提取节点！
                 isSearching = false;
-                extractSearchResults();
+                log("   => 正在等待第 " + currentPage + " 页数据渲染...");
+                // 给网页 3 秒的渲染时间，防止直接抓到空白页，彻底解决 0 节点和无法进入第三页的问题
+                new Handler(Looper.getMainLooper()).postDelayed(this::extractSearchResults, 3000);
             }
         }
     }
