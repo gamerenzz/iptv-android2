@@ -193,24 +193,45 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl());
             String currentIp = extractIpFromUrl(currentUrl);
 
-            // 1. 【核心修复】彻底取消容器限制，直接全局抓取所有 207 个节点！
+            // 全局抓取所有节点
             Elements channelItems = doc.select("div.result");
 
             int validCount = 0;
-            java.util.HashSet<String> uniqueKeys = new java.util.HashSet<>(); // 用于防止节点内数据重复
+            java.util.HashSet<String> uniqueKeys = new java.util.HashSet<>();
+
+            // === 诊断计数器 ===
+            int total = channelItems.size();
+            int noDiv = 0;
+            int emptyName = 0;
+            int isSD = 0;
+            int noUrl = 0;
+            int invalidStream = 0;
+            int dup = 0;
+
+            log("\n================ 诊断报告 (节点: " + currentIp + ") ================");
+            log("1. 网页源码中，Jsoup 真正“看”到的总节点数: " + total);
 
             for (Element item : channelItems) {
                 Element channelDiv = item.selectFirst("div.channel");
-                if (channelDiv == null) continue;
+                if (channelDiv == null) {
+                    noDiv++;
+                    continue;
+                }
                 
                 String channelName = channelDiv.text().replaceAll("\\s+", "");
-                if (channelName.isEmpty()) continue;
-                if (channelName.toUpperCase().endsWith("SD")) continue;
+                if (channelName.isEmpty()) {
+                    emptyName++;
+                    continue;
+                }
+                if (channelName.toUpperCase().endsWith("SD")) {
+                    isSD++;
+                    continue;
+                }
 
                 // 提取播放源 URL
                 String proxyUrl = "";
                 
-                // 算法 A：优先从 a 标签的 href 属性提取
+                // 算法 A：优先从 a 标签提取
                 for (Element a : item.select("a[href]")) {
                     if (!a.attr("href").contains("channellist")) {
                         proxyUrl = a.attr("href");
@@ -218,7 +239,9 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // 算法 B：如果 a 标签是空的，利用正则表达式直接从网页文本中提取直连 URL
+                boolean foundViaHref = !proxyUrl.isEmpty();
+
+                // 算法 B：如果 a 标签是空的，利用正则表达式直接从网页的原始 HTML (outerHtml) 中提取直连 URL
                 if (proxyUrl.isEmpty()) {
                     Pattern urlPattern = Pattern.compile("https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|]");
                     Matcher urlMatcher = urlPattern.matcher(item.outerHtml()); 
@@ -227,27 +250,56 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                if (!proxyUrl.isEmpty()) {
-                    String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
-                    if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
-                        
-                        // 【去重判定】防止全局提取时出现重复频道
-                        String uniqueKey = channelName + "_" + rawStreamUrl;
-                        if (uniqueKeys.contains(uniqueKey)) continue;
-                        uniqueKeys.add(uniqueKey);
+                // 【CCTV 专项跟踪高亮】如果是 CCTV 1-9，无论成功与否，强行打印它的状态！
+                boolean isTargetCCTV = channelName.contains("CCTV") && 
+                    (channelName.contains("1") || channelName.contains("2") || channelName.contains("3") || 
+                     channelName.contains("4") || channelName.contains("5") || channelName.contains("6") || 
+                     channelName.contains("7") || channelName.contains("8") || channelName.contains("9")) &&
+                    !channelName.contains("10") && !channelName.contains("11") && !channelName.contains("12") && 
+                    !channelName.contains("13") && !channelName.contains("14") && !channelName.contains("15") && 
+                    !channelName.contains("16") && !channelName.contains("17") && !channelName.contains("5+");
 
-                        String groupName = determineGroup(channelName, currentKeyword);
-                        m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
-                        validCount++;
+                if (isTargetCCTV) {
+                    log("   [CCTV跟踪] 找到: " + channelName);
+                    log("   [CCTV跟踪] -> 算法A(超链接) 提取结果: " + (foundViaHref ? "【成功】" + proxyUrl : "【无超链接】"));
+                    log("   [CCTV跟踪] -> 算法B(正则HTML) 提取结果: " + (proxyUrl.isEmpty() ? "【仍无链接】" : "【成功】" + proxyUrl));
+                }
+
+                if (proxyUrl.isEmpty()) {
+                    noUrl++;
+                    continue;
+                }
+
+                String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
+                if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
+                    
+                    String uniqueKey = channelName + "_" + rawStreamUrl;
+                    if (uniqueKeys.contains(uniqueKey)) {
+                        dup++;
+                        continue;
                     }
+                    uniqueKeys.add(uniqueKey);
+
+                    String groupName = determineGroup(channelName, currentKeyword);
+                    m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
+                    validCount++;
+                } else {
+                    invalidStream++;
                 }
             }
 
+            log("2. 过滤详情统计:");
+            log("   - 缺少 channel 标签过滤: " + noDiv + " 个");
+            log("   - 名字为空过滤: " + emptyName + " 个");
+            log("   - SD 标清过滤: " + isSD + " 个");
+            log("   - 最终无法提取到 URL 过滤: " + noUrl + " 个");
+            log("   - 直连校验失败过滤: " + invalidStream + " 个");
+            log("   - 内存去重过滤: " + dup + " 个");
+            log("   - 本次实际成功保存数: " + validCount + " 个");
+            log("==================================================\n");
+
             if (validCount > 0) {
                 successfulIps.add(currentIp);
-                log("   [成功] 提取 " + validCount + " 个源。进度: " + successfulIps.size() + "/" + MAX_IP_COUNT);
-            } else {
-                log("   [跳过] 无有效源。");
             }
             processNextNode();
         });
