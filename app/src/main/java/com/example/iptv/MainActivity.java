@@ -379,6 +379,25 @@ public class MainActivity extends Activity {
                     return scheme + "://" + finalIp + port + "/" + pathPart;
                 }
             }
+
+            // ==========================================
+            // 【核心修复】：补上 Python 版本的普通 Base64 兜底解码
+            // 解决 CCTV1 到 CCTV9、CCTV4K 等因没有 Gh0d 标记导致解密失败的问题！
+            // ==========================================
+            try {
+                String padded = encodedPart.trim().replaceAll("=$", "");
+                while (padded.length() % 4 != 0) padded += "=";
+                
+                byte[] decodedBytes = Base64.decode(padded, Base64.DEFAULT);
+                String decodedStr = new String(decodedBytes, "UTF-8");
+                if (decodedStr.contains("http")) {
+                    int httpIdx = decodedStr.indexOf("http");
+                    return decodedStr.substring(httpIdx).trim();
+                }
+            } catch (Exception e) {
+                // 忽略普通解码异常，继续走下面的流程
+            }
+
         } catch (Exception e) {}
         return proxyUrl;
     }
