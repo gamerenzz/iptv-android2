@@ -193,7 +193,15 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl());
             String currentIp = extractIpFromUrl(currentUrl);
 
-            Elements channelItems = doc.select("div.result");
+            // 1. 优先从解密后的容器 #hiddenresult 中提取，确保数据最全且不重复
+            Element hiddenContainer = doc.getElementById("hiddenresult");
+            Elements channelItems;
+            if (hiddenContainer != null) {
+                channelItems = hiddenContainer.select("div.result");
+            } else {
+                channelItems = doc.select("div.result");
+            }
+
             int validCount = 0;
 
             for (Element item : channelItems) {
@@ -204,7 +212,10 @@ public class MainActivity extends Activity {
                 if (channelName.isEmpty()) continue;
                 if (channelName.toUpperCase().endsWith("SD")) continue;
 
+                // 提取播放源 URL
                 String proxyUrl = "";
+                
+                // 算法 A：优先从 a 标签的 href 属性提取
                 for (Element a : item.select("a[href]")) {
                     if (!a.attr("href").contains("channellist")) {
                         proxyUrl = a.attr("href");
@@ -212,10 +223,19 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                // 算法 B【核心修复】：如果 a 标签是空的，说明是 CCTV 等纯文本展示的链接
+                // 开启正则表达式强行从 div 文本中把 http 直连源抠出来！（平替 Python 的 re.findall）
+                if (proxyUrl.isEmpty()) {
+                    Pattern urlPattern = Pattern.compile("https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|]");
+                    Matcher urlMatcher = urlPattern.matcher(item.text());
+                    if (urlMatcher.find()) {
+                        proxyUrl = urlMatcher.group();
+                    }
+                }
+
                 if (!proxyUrl.isEmpty()) {
                     String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
                     if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
-                        // 核心：调用 Jsoup 分组算法
                         String groupName = determineGroup(channelName, currentKeyword);
                         m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
                         validCount++;
