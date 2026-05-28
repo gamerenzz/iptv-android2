@@ -164,7 +164,8 @@ public class MainActivity extends Activity {
                 Element channelDiv = item.selectFirst("div.channel");
                 if (channelDiv == null) continue;
                 
-                String channelName = channelDiv.text().trim();
+                String channelName = channelDiv.text().replaceAll("\\s+", "");
+                if (channelName.isEmpty()) continue;
                 if (channelName.toUpperCase().endsWith("SD")) continue;
 
                 String proxyUrl = "";
@@ -255,7 +256,12 @@ public class MainActivity extends Activity {
 
     private String unescapeHtml(String html) {
         if (html == null) return "";
-        return html.replace("\\u003C", "<").replace("\\\"", "\"").replace("\\n", "").replaceAll("^\"|\"$", "");
+        return html.replace("\\u003C", "<")
+                   .replace("\\\"", "\"")
+                   .replace("\\n", "")
+                   .replace("\\t", "")  // 新增：彻底抹除 JS 传回的制表符
+                   .replace("\\r", "")  // 新增：彻底抹除回车符
+                   .replaceAll("^\"|\"$", "");
     }
 
     private void log(String msg) {
