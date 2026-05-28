@@ -142,7 +142,9 @@ public class MainActivity extends Activity {
         log("3. 提取第 " + currentPage + " 页的搜索结果...");
         webView.evaluateJavascript("(function(){return document.documentElement.outerHTML;})();", html -> {
             String cleanHtml = unescapeHtml(html);
-            Document doc = Jsoup.parse(cleanHtml);
+            
+            // 核心修复：传入当前 WebView 的 URL 作为基准，让 Jsoup 智能解析绝对路径
+            Document doc = Jsoup.parse(cleanHtml, webView.getUrl()); 
             Elements results = doc.select("div.result");
 
             for (Element item : results) {
@@ -151,16 +153,18 @@ public class MainActivity extends Activity {
 
                 Element aTag = item.selectFirst("div.channel a[href]");
                 if (aTag != null && aTag.attr("href").contains("p=2")) {
-                    nodeUrlsToParse.add(BASE_URL + aTag.attr("href"));
+                    // 修复：使用 aTag.absUrl("href") 自动获取绝对路径
+                    nodeUrlsToParse.add(aTag.absUrl("href"));
                 }
             }
 
-            // 提取翻页链接：寻找带有 ">>" 的 a 标签
+            // 提取翻页链接
             nextPageUrl = ""; 
             Elements aLinks = doc.select("a[href]");
             for (Element a : aLinks) {
                 if (a.text().contains(">>")) {
-                    nextPageUrl = BASE_URL + a.attr("href");
+                    // 修复：使用 a.absUrl("href") 自动获取正确的翻页绝对路径
+                    nextPageUrl = a.absUrl("href");
                     break;
                 }
             }
