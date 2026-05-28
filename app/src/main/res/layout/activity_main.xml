@@ -5,7 +5,6 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <!-- 顶层逃生舱：如果触发验证码，把它放大到 match_parent -->
     <FrameLayout
         android:id="@+id/webviewContainer"
         android:layout_width="1dp"
@@ -16,22 +15,35 @@
             android:layout_height="match_parent" />
     </FrameLayout>
 
+    <!-- 新增：关键字输入框 -->
+    <EditText
+        android:id="@+id/etKeyword"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="请输入搜索关键字 (如: 湖南, 湖北)"
+        android:text="湖北"
+        android:inputType="text"
+        android:maxLines="1" />
+
     <Button
         android:id="@+id/btnStart"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="开始抓取湖北节点" />
+        android:layout_marginTop="8dp"
+        android:text="开始抓取节点" />
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginTop="16dp">
+        <!-- 新增：textIsSelectable="true" 开启长按复制功能 -->
         <TextView
             android:id="@+id/tvLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="准备就绪...\n"
-            android:textSize="14sp" />
+            android:textSize="14sp"
+            android:textIsSelectable="true" />
     </ScrollView>
 </LinearLayout>
