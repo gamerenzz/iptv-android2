@@ -116,7 +116,11 @@ public class MainActivity extends Activity {
     }
 
     private void handlePageFinished(String url) {
-        if (url.contains("iptvmulticast.php") && isSearching) {
+        if (url.contains("channellist.html")) {
+            // 只要包含 channellist，就去解析通道
+            extractNodeChannels(url);
+        } else if (isSearching) {
+            // 只要是在搜索/翻页状态中，且加载完的不是通道，就一律判定为“搜索结果页”
             if (currentPage == 1) {
                 log("2. 注入JS搜索:【" + currentKeyword + "】...");
                 String js = "document.getElementById('search').value='" + currentKeyword + "';" +
@@ -125,12 +129,10 @@ public class MainActivity extends Activity {
                 isSearching = false; 
                 new Handler(Looper.getMainLooper()).postDelayed(this::extractSearchResults, 5000);
             } else {
-                // 如果是翻页后的 multicast 页面，不需要再次 submit，直接解析即可
+                // 第二页及后续页面，不需要注入JS搜索，直接提取节点！
                 isSearching = false;
                 extractSearchResults();
             }
-        } else if (url.contains("channellist.html")) {
-            extractNodeChannels(url);
         }
     }
 
