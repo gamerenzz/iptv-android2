@@ -393,6 +393,7 @@ public class MainActivity extends Activity {
         if (html == null) return "";
         return html.replace("\\u003C", "<")
                    .replace("\\\"", "\"")
+                   .replace("\\/", "/")   // 【最关键修复】：把 JS 转义的斜杠 \/ 彻底还原为 /
                    .replace("\\n", "")
                    .replace("\\t", "")  
                    .replace("\\r", "")  
