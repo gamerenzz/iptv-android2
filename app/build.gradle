@@ -1,3 +1,31 @@
 plugins {
-    id 'com.android.application' version '8.1.1' apply false
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.iptv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.iptv"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // 引入 Jsoup 用于 HTML 解析，平替 Python 中的 BeautifulSoup
+    implementation 'org.jsoup:jsoup:1.17.2'
 }
