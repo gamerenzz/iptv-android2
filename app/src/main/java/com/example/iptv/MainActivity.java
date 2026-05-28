@@ -38,19 +38,6 @@ import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
-    // 内部数据类：用于存放频道，方便后期分类排序
-    static class Channel {
-        String name;
-        String group;
-        String url;
-
-        Channel(String name, String group, String url) {
-            this.name = name;
-            this.group = group;
-            this.url = url;
-        }
-    }
-
     private WebView webView;
     private TextView tvLog;
     private Button btnStart;
@@ -63,22 +50,12 @@ public class MainActivity extends Activity {
 
     private boolean isSearching = false;
     private Queue<String> nodeUrlsToParse = new LinkedList<>();
+    private List<String> m3uResults = new ArrayList<>();
     private List<String> successfulIps = new ArrayList<>();
     private String currentKeyword = "";
 
-    // 翻页控制
     private String nextPageUrl = "";
     private int currentPage = 1;
-
-    // 排序“多桶”定义：严格对应用户要求的 1, 2, 3, 4, 5 顺序
-    private List<Channel> cctvGroup = new ArrayList<>();     // 1. 央视频道
-    private List<Channel> localGroup = new ArrayList<>();    // 2. 湖北/本地频道
-    private List<Channel> weishiGroup = new ArrayList<>();   // 3. 卫视频道
-    private List<Channel> gmtGroup = new ArrayList<>();      // 4. 港澳台频道
-    private List<Channel> movieGroup = new ArrayList<>();    // 5.1 其他：影视频道
-    private List<Channel> sportsGroup = new ArrayList<>();   // 5.2 其他：体育频道
-    private List<Channel> kidsGroup = new ArrayList<>();     // 5.3 其他：少儿频道
-    private List<Channel> otherGroup = new ArrayList<>();    // 5.4 其他：普通频道
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,19 +77,10 @@ public class MainActivity extends Activity {
             }
 
             btnStart.setEnabled(false);
+            m3uResults.clear();
             successfulIps.clear();
             nodeUrlsToParse.clear();
             
-            // 清理所有的“小桶”
-            cctvGroup.clear();
-            localGroup.clear();
-            weishiGroup.clear();
-            gmtGroup.clear();
-            movieGroup.clear();
-            sportsGroup.clear();
-            kidsGroup.clear();
-            otherGroup.clear();
-
             currentPage = 1;
             nextPageUrl = "";
             isSearching = true;
@@ -222,7 +190,7 @@ public class MainActivity extends Activity {
     private void extractNodeChannels(String currentUrl) {
         webView.evaluateJavascript("(function(){return document.documentElement.outerHTML;})();", html -> {
             String cleanHtml = unescapeHtml(html);
-            Document doc = Jsoup.parse(cleanHtml);
+            Document doc = Jsoup.parse(cleanHtml, webView.getUrl());
             String currentIp = extractIpFromUrl(currentUrl);
 
             Elements channelItems = doc.select("div.result");
@@ -247,8 +215,9 @@ public class MainActivity extends Activity {
                 if (!proxyUrl.isEmpty()) {
                     String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
                     if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
-                        // 智能进行多桶分类装载
-                        dispatchChannel(channelName, rawStreamUrl);
+                        // 核心：调用 Jsoup 分组算法
+                        String groupName = determineGroup(channelName, currentKeyword);
+                        m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
                         validCount++;
                     }
                 }
@@ -264,65 +233,51 @@ public class MainActivity extends Activity {
         });
     }
 
-    // 智能分类投递模块
-    private void dispatchChannel(String name, String url) {
+    // 智能分组算法（完美复刻 Windows 版 Python）
+    private String determineGroup(String name, String keyword) {
         String nameUpper = name.toUpperCase();
 
-        // 1. 央视频道
+        // 1. 4K频道
+        if (nameUpper.contains("4K")) {
+            return "4K频道";
+        }
+        
+        // 2. 央视频道
         if (nameUpper.contains("CCTV") || nameUpper.contains("CGTN") || nameUpper.contains("CETV")) {
-            cctvGroup.add(new Channel(name, "央视频道", url));
-            return;
+            return "央视频道";
         }
-
-        // 2. 湖北/本地频道 (动态跟随输入框，本地特异词做保底)
-        boolean isLocal = false;
-        if (!currentKeyword.isEmpty() && name.contains(currentKeyword)) {
-            isLocal = true;
-        } else {
-            String[] localKeywords = {"湖北", "武汉", "房县", "阳新", "蔡甸", "垄上", "经视"};
-            for (String kw : localKeywords) {
-                if (name.contains(kw)) {
-                    isLocal = true;
-                    break;
-                }
-            }
+        
+        // 3. 本地地方台（根据用户输入的关键字动态归类，如 湖北频道 / 湖南频道）
+        // 同时支持常见的本地台特色名词匹配
+        if (name.contains(keyword) || name.contains("武汉") || name.contains("长沙") || name.contains("经视") || name.contains("垄上") || name.contains("综合") || name.contains("新闻")) {
+            return keyword + "频道";
         }
-        if (isLocal) {
-            localGroup.add(new Channel(name, currentKeyword + "频道", url));
-            return;
-        }
-
-        // 3. 卫视频道
+        
+        // 4. 卫视频道
         if (name.contains("卫视")) {
-            weishiGroup.add(new Channel(name, "卫视频道", url));
-            return;
+            return "卫视频道";
         }
-
-        // 4. 港澳台频道
-        if (name.contains("凤凰") || nameUpper.contains("TVB") || name.contains("翡翠") || name.contains("明珠") || name.contains("星空")) {
-            gmtGroup.add(new Channel(name, "港澳台", url));
-            return;
+        
+        // 5. 体育频道
+        String[] sports = {"体育", "足球", "高尔夫", "台球", "网球", "垂钓", "羽", "乒", "武术", "世界", "风云足球"};
+        for (String sp : sports) {
+            if (name.contains(sp)) return "体育频道";
         }
-
-        // 5. 其他频道分类（网络一般规律细分）
-        // 5.1 影视频道
-        if (nameUpper.contains("CHC") || name.contains("电影") || name.contains("影院") || name.contains("剧场") || name.contains("戏曲") || name.contains("梨园")) {
-            movieGroup.add(new Channel(name, "影视频道", url));
-            return;
+        
+        // 6. 影视频道
+        String[] movies = {"CHC", "电影", "剧场", "影迷", "故事", "戏曲", "梨园", "第一剧场"};
+        for (String mv : movies) {
+            if (nameUpper.contains(mv)) return "影视频道";
         }
-        // 5.2 体育频道
-        if (name.contains("体育") || name.contains("足球") || name.contains("高尔夫") || name.contains("台球") || name.contains("网球") || name.contains("垂钓") || name.contains("武术") || name.contains("竞技") || name.contains("风云")) {
-            sportsGroup.add(new Channel(name, "体育频道", url));
-            return;
+        
+        // 7. 少儿频道
+        String[] kids = {"动漫", "少儿", "卡通", "卡酷", "游戏", "金鹰卡通"};
+        for (String kd : kids) {
+            if (name.contains(kd)) return "少儿频道";
         }
-        // 5.3 少儿/动漫频道
-        if (name.contains("少儿") || name.contains("卡通") || name.contains("动漫") || name.contains("动画") || name.contains("游戏") || name.contains("金鹰")) {
-            kidsGroup.add(new Channel(name, "少儿频道", url));
-            return;
-        }
-
-        // 5.4 实在没有匹配上的，归入其他
-        otherGroup.add(new Channel(name, "其他频道", url));
+        
+        // 8. 其他频道
+        return "其他频道";
     }
 
     private String extractIpFromUrl(String url) {
@@ -357,20 +312,8 @@ public class MainActivity extends Activity {
     }
 
     private void finishAndSaveM3U() {
-        log("\n[结束] 节点处理完毕。正在拼装高精排序M3U列表...");
-
-        // 严格按照用户指定的 1, 2, 3, 4, 5 顺序，进行“大合拢”
-        List<Channel> finalSortedList = new ArrayList<>();
-        finalSortedList.addAll(cctvGroup);     // 1. 央视
-        finalSortedList.addAll(localGroup);    // 2. 湖北/本地
-        finalSortedList.addAll(weishiGroup);   // 3. 卫视
-        finalSortedList.addAll(gmtGroup);      // 4. 港澳台
-        finalSortedList.addAll(movieGroup);    // 5.1 影视
-        finalSortedList.addAll(sportsGroup);   // 5.2 体育
-        finalSortedList.addAll(kidsGroup);     // 5.3 少儿
-        finalSortedList.addAll(otherGroup);    // 5.4 其他
-
-        if (finalSortedList.isEmpty()) {
+        log("\n[结束] 节点处理完毕。");
+        if (m3uResults.isEmpty()) {
             btnStart.setEnabled(true);
             return;
         }
@@ -382,12 +325,10 @@ public class MainActivity extends Activity {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                 Uri contentUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
 
-                // 覆盖写入：删掉旧的
                 String selection = MediaStore.MediaColumns.DISPLAY_NAME + "=?";
                 String[] selectionArgs = new String[]{fileName};
                 resolver.delete(contentUri, selection, selectionArgs);
 
-                // 插入新的
                 ContentValues values = new ContentValues();
                 values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
                 values.put(MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl");
@@ -398,14 +339,15 @@ public class MainActivity extends Activity {
                     try (OutputStream os = resolver.openOutputStream(uri)) {
                         if (os != null) {
                             os.write("#EXTM3U\n".getBytes());
-                            for (Channel ch : finalSortedList) {
-                                String line = String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", ch.group, ch.name, ch.url);
+                            for (String line : m3uResults) {
                                 os.write((line + "\n").getBytes());
                             }
                         }
                     }
-                    log("\n[大获成功] 已成功保存并【覆盖】公共目录：\n/Download/" + fileName);
-                    Toast.makeText(this, "列表已按顺序分类完美导出！", Toast.LENGTH_LONG).show();
+                    log("\n已成功保存并【覆盖】公共目录：\n/Download/" + fileName);
+                    Toast.makeText(this, "保存并覆盖成功！在 内部存储/Download 中查看", Toast.LENGTH_LONG).show();
+                } else {
+                    log("保存失败：创建媒体流失败");
                 }
             } else {
                 File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
@@ -414,14 +356,11 @@ public class MainActivity extends Activity {
                 
                 FileOutputStream fos = new FileOutputStream(file);
                 fos.write("#EXTM3U\n".getBytes());
-                for (Channel ch : finalSortedList) {
-                    String line = String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", ch.group, ch.name, ch.url);
-                    fos.write((line + "\n").getBytes());
-                }
+                for (String line : m3uResults) fos.write((line + "\n").getBytes());
                 fos.close();
                 
-                log("\n[大获成功] 已成功保存并【覆盖】公共目录：\n" + file.getAbsolutePath());
-                Toast.makeText(this, "列表已按顺序分类完美导出！", Toast.LENGTH_LONG).show();
+                log("\n已成功保存并【覆盖】公共目录：\n" + file.getAbsolutePath());
+                Toast.makeText(this, "保存并覆盖成功！", Toast.LENGTH_LONG).show();
             }
         } catch (Exception e) {
             log("保存失败: " + e.getMessage());
