@@ -193,16 +193,11 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl());
             String currentIp = extractIpFromUrl(currentUrl);
 
-            // 1. 优先从解密后的容器 #hiddenresult 中提取，确保数据最全且不重复
-            Element hiddenContainer = doc.getElementById("hiddenresult");
-            Elements channelItems;
-            if (hiddenContainer != null) {
-                channelItems = hiddenContainer.select("div.result");
-            } else {
-                channelItems = doc.select("div.result");
-            }
+            // 1. 【核心修复】彻底取消容器限制，直接全局抓取所有 207 个节点！
+            Elements channelItems = doc.select("div.result");
 
             int validCount = 0;
+            java.util.HashSet<String> uniqueKeys = new java.util.HashSet<>(); // 用于防止节点内数据重复
 
             for (Element item : channelItems) {
                 Element channelDiv = item.selectFirst("div.channel");
@@ -223,8 +218,7 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // 算法 B【核心修复】：如果 a 标签是空的，说明是 CCTV 等纯文本展示的链接
-                // 开启正则表达式强行从 div 文本中把 http 直连源抠出来！（平替 Python 的 re.findall）
+                // 算法 B：如果 a 标签是空的，利用正则表达式直接从网页文本中提取直连 URL
                 if (proxyUrl.isEmpty()) {
                     Pattern urlPattern = Pattern.compile("https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|]");
                     Matcher urlMatcher = urlPattern.matcher(item.text());
@@ -236,6 +230,12 @@ public class MainActivity extends Activity {
                 if (!proxyUrl.isEmpty()) {
                     String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
                     if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
+                        
+                        // 【去重判定】防止全局提取时出现重复频道
+                        String uniqueKey = channelName + "_" + rawStreamUrl;
+                        if (uniqueKeys.contains(uniqueKey)) continue;
+                        uniqueKeys.add(uniqueKey);
+
                         String groupName = determineGroup(channelName, currentKeyword);
                         m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
                         validCount++;
