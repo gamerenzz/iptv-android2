@@ -96,7 +96,7 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        String fakeUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36";
+        String fakeUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, Gecko) Chrome/119.0.0.0 Mobile Safari/537.36";
         settings.setUserAgentString(fakeUA);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
@@ -193,45 +193,21 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl());
             String currentIp = extractIpFromUrl(currentUrl);
 
-            // 全局抓取所有节点
             Elements channelItems = doc.select("div.result");
 
             int validCount = 0;
-            java.util.HashSet<String> uniqueKeys = new java.util.HashSet<>();
-
-            // === 诊断计数器 ===
-            int total = channelItems.size();
-            int noDiv = 0;
-            int emptyName = 0;
-            int isSD = 0;
-            int noUrl = 0;
-            int invalidStream = 0;
-            int dup = 0;
-
-            log("\n================ 诊断报告 (节点: " + currentIp + ") ================");
-            log("1. 网页源码中，Jsoup 真正“看”到的总节点数: " + total);
+            java.util.HashSet<String> uniqueKeys = new java.util.HashSet<>(); 
 
             for (Element item : channelItems) {
                 Element channelDiv = item.selectFirst("div.channel");
-                if (channelDiv == null) {
-                    noDiv++;
-                    continue;
-                }
+                if (channelDiv == null) continue;
                 
                 String channelName = channelDiv.text().replaceAll("\\s+", "");
-                if (channelName.isEmpty()) {
-                    emptyName++;
-                    continue;
-                }
-                if (channelName.toUpperCase().endsWith("SD")) {
-                    isSD++;
-                    continue;
-                }
+                if (channelName.isEmpty()) continue;
+                if (channelName.toUpperCase().endsWith("SD")) continue;
 
-                // 提取播放源 URL
                 String proxyUrl = "";
                 
-                // 算法 A：优先从 a 标签提取
                 for (Element a : item.select("a[href]")) {
                     if (!a.attr("href").contains("channellist")) {
                         proxyUrl = a.attr("href");
@@ -239,9 +215,6 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                boolean foundViaHref = !proxyUrl.isEmpty();
-
-                // 算法 B：如果 a 标签是空的，利用正则表达式直接从网页的原始 HTML (outerHtml) 中提取直连 URL
                 if (proxyUrl.isEmpty()) {
                     Pattern urlPattern = Pattern.compile("https?://[a-zA-Z0-9+&@#/%?=~_|!:,.;]*[a-zA-Z0-9+&@#/%=~_|]");
                     Matcher urlMatcher = urlPattern.matcher(item.outerHtml()); 
@@ -250,105 +223,66 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // 【CCTV 专项跟踪高亮】如果是 CCTV 1-9，无论成功与否，强行打印它的状态！
-                boolean isTargetCCTV = channelName.contains("CCTV") && 
-                    (channelName.contains("1") || channelName.contains("2") || channelName.contains("3") || 
-                     channelName.contains("4") || channelName.contains("5") || channelName.contains("6") || 
-                     channelName.contains("7") || channelName.contains("8") || channelName.contains("9")) &&
-                    !channelName.contains("10") && !channelName.contains("11") && !channelName.contains("12") && 
-                    !channelName.contains("13") && !channelName.contains("14") && !channelName.contains("15") && 
-                    !channelName.contains("16") && !channelName.contains("17") && !channelName.contains("5+");
+                if (!proxyUrl.isEmpty()) {
+                    String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
+                    if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
+                        
+                        String uniqueKey = channelName + "_" + rawStreamUrl;
+                        if (uniqueKeys.contains(uniqueKey)) continue;
+                        uniqueKeys.add(uniqueKey);
 
-                if (isTargetCCTV) {
-                    log("   [CCTV跟踪] 找到: " + channelName);
-                    log("   [CCTV跟踪] -> 算法A(超链接) 提取结果: " + (foundViaHref ? "【成功】" + proxyUrl : "【无超链接】"));
-                    log("   [CCTV跟踪] -> 算法B(正则HTML) 提取结果: " + (proxyUrl.isEmpty() ? "【仍无链接】" : "【成功】" + proxyUrl));
-                }
-
-                if (proxyUrl.isEmpty()) {
-                    noUrl++;
-                    continue;
-                }
-
-                String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
-                if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
-                    
-                    String uniqueKey = channelName + "_" + rawStreamUrl;
-                    if (uniqueKeys.contains(uniqueKey)) {
-                        dup++;
-                        continue;
+                        String groupName = determineGroup(channelName, currentKeyword);
+                        m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
+                        validCount++;
                     }
-                    uniqueKeys.add(uniqueKey);
-
-                    String groupName = determineGroup(channelName, currentKeyword);
-                    m3uResults.add(String.format("#EXTINF:-1 group-title=\"%s\",%s\n%s", groupName, channelName, rawStreamUrl));
-                    validCount++;
-                } else {
-                    invalidStream++;
                 }
             }
 
-            log("2. 过滤详情统计:");
-            log("   - 缺少 channel 标签过滤: " + noDiv + " 个");
-            log("   - 名字为空过滤: " + emptyName + " 个");
-            log("   - SD 标清过滤: " + isSD + " 个");
-            log("   - 最终无法提取到 URL 过滤: " + noUrl + " 个");
-            log("   - 直连校验失败过滤: " + invalidStream + " 个");
-            log("   - 内存去重过滤: " + dup + " 个");
-            log("   - 本次实际成功保存数: " + validCount + " 个");
-            log("==================================================\n");
-
+            // 还原：清爽简约的成功/跳过日志
             if (validCount > 0) {
                 successfulIps.add(currentIp);
+                log("   [成功] 提取 " + validCount + " 个源。进度: " + successfulIps.size() + "/" + MAX_IP_COUNT);
+            } else {
+                log("   [跳过] 无有效源。");
             }
             processNextNode();
         });
     }
 
-    // 智能分组算法（完美复刻 Windows 版 Python）
     private String determineGroup(String name, String keyword) {
         String nameUpper = name.toUpperCase();
 
-        // 1. 4K频道
         if (nameUpper.contains("4K")) {
             return "4K频道";
         }
         
-        // 2. 央视频道
         if (nameUpper.contains("CCTV") || nameUpper.contains("CGTN") || nameUpper.contains("CETV")) {
             return "央视频道";
         }
         
-        // 3. 本地地方台（根据用户输入的关键字动态归类，如 湖北频道 / 湖南频道）
-        // 同时支持常见的本地台特色名词匹配
         if (name.contains(keyword) || name.contains("武汉") || name.contains("长沙") || name.contains("经视") || name.contains("垄上") || name.contains("综合") || name.contains("新闻")) {
             return keyword + "频道";
         }
         
-        // 4. 卫视频道
         if (name.contains("卫视")) {
             return "卫视频道";
         }
         
-        // 5. 体育频道
         String[] sports = {"体育", "足球", "高尔夫", "台球", "网球", "垂钓", "羽", "乒", "武术", "世界", "风云足球"};
         for (String sp : sports) {
             if (name.contains(sp)) return "体育频道";
         }
         
-        // 6. 影视频道
         String[] movies = {"CHC", "电影", "剧场", "影迷", "故事", "戏曲", "梨园", "第一剧场"};
         for (String mv : movies) {
             if (nameUpper.contains(mv)) return "影视频道";
         }
         
-        // 7. 少儿频道
         String[] kids = {"动漫", "少儿", "卡通", "卡酷", "游戏", "金鹰卡通"};
         for (String kd : kids) {
             if (name.contains(kd)) return "少儿频道";
         }
         
-        // 8. 其他频道
         return "其他频道";
     }
 
@@ -380,23 +314,17 @@ public class MainActivity extends Activity {
                 }
             }
 
-            // ==========================================
-            // 【核心修复】：补上 Python 版本的普通 Base64 兜底解码
-            // 解决 CCTV1 到 CCTV9、CCTV4K 等因没有 Gh0d 标记导致解密失败的问题！
-            // ==========================================
+            // 核心解密：Base64 兜底解码
             try {
                 String padded = encodedPart.trim().replaceAll("=$", "");
                 while (padded.length() % 4 != 0) padded += "=";
-                
                 byte[] decodedBytes = Base64.decode(padded, Base64.DEFAULT);
                 String decodedStr = new String(decodedBytes, "UTF-8");
                 if (decodedStr.contains("http")) {
                     int httpIdx = decodedStr.indexOf("http");
                     return decodedStr.substring(httpIdx).trim();
                 }
-            } catch (Exception e) {
-                // 忽略普通解码异常，继续走下面的流程
-            }
+            } catch (Exception e) {}
 
         } catch (Exception e) {}
         return proxyUrl;
@@ -464,7 +392,7 @@ public class MainActivity extends Activity {
         if (html == null) return "";
         return html.replace("\\u003C", "<")
                    .replace("\\\"", "\"")
-                   .replace("\\/", "/")   // 【最关键修复】：把 JS 转义的斜杠 \/ 彻底还原为 /
+                   .replace("\\/", "/")   
                    .replace("\\n", "")
                    .replace("\\t", "")  
                    .replace("\\r", "")  
