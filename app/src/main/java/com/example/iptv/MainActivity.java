@@ -42,6 +42,7 @@ public class MainActivity extends Activity {
     private TextView tvLog;
     private Button btnStart;
     private EditText etKeyword;
+    private EditText etIpFilter; // 新增过滤器控件
 
     private static final String BASE_URL = "https://tonkiang.us/";
     private static final String SEARCH_URL = BASE_URL + "iptvmulticast.php";
@@ -53,6 +54,7 @@ public class MainActivity extends Activity {
     private List<String> m3uResults = new ArrayList<>();
     private List<String> successfulIps = new ArrayList<>();
     private String currentKeyword = "";
+    private String ipFilterInput = ""; // 存放过滤器输入
 
     private String nextPageUrl = "";
     private int currentPage = 1;
@@ -66,11 +68,14 @@ public class MainActivity extends Activity {
         tvLog = findViewById(R.id.tvLog);
         btnStart = findViewById(R.id.btnStart);
         etKeyword = findViewById(R.id.etKeyword);
+        etIpFilter = findViewById(R.id.etIpFilter); // 初始化
 
         setupWebView();
 
         btnStart.setOnClickListener(v -> {
             currentKeyword = etKeyword.getText().toString().trim();
+            ipFilterInput = etIpFilter.getText().toString().trim(); // 获取过滤条件
+            
             if (currentKeyword.isEmpty()) {
                 Toast.makeText(this, "请输入关键字", Toast.LENGTH_SHORT).show();
                 return;
@@ -139,13 +144,46 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl()); 
             Elements results = doc.select("div.result");
 
+            // 解析过滤器规则
+            boolean isWhitelistMode = false;
+            List<String> whitelistIps = new ArrayList<>();
+            List<String> blacklistIps = new ArrayList<>();
+
+            if (!ipFilterInput.isEmpty()) {
+                String[] parts = ipFilterInput.split(",");
+                for (String p : parts) {
+                    String cleanIp = p.trim();
+                    if (cleanIp.startsWith("-")) {
+                        blacklistIps.add(cleanIp.substring(1).trim()); // 排除名单
+                    } else {
+                        isWhitelistMode = true;
+                        whitelistIps.add(cleanIp); // 仅保留名单
+                    }
+                }
+            }
+
             for (Element item : results) {
                 Element statusDiv = item.selectFirst("div[style*='float: right']");
                 if (statusDiv != null && statusDiv.text().contains("暂时失效")) continue;
 
                 Element aTag = item.selectFirst("div.channel a[href]");
                 if (aTag != null && aTag.attr("href").contains("p=2")) {
-                    nodeUrlsToParse.add(aTag.absUrl("href"));
+                    String absUrl = aTag.absUrl("href");
+                    String nodeIp = extractIpFromUrl(absUrl);
+
+                    // 执行 IP 智能过滤
+                    if (isWhitelistMode) {
+                        if (!whitelistIps.contains(nodeIp)) {
+                            continue; // 跳过不在白名单里的 IP
+                        }
+                    } else {
+                        if (blacklistIps.contains(nodeIp)) {
+                            log("   [排除] 黑名单跳过 IP: " + nodeIp);
+                            continue; // 跳过黑名单里的 IP
+                        }
+                    }
+
+                    nodeUrlsToParse.add(absUrl);
                 }
             }
 
@@ -158,7 +196,7 @@ public class MainActivity extends Activity {
                 }
             }
 
-            log("   => 第 " + currentPage + " 页导入了: " + results.size() + " 个有效候选节点");
+            log("   => 第 " + currentPage + " 页导入了: " + nodeUrlsToParse.size() + " 个候选节点");
             processNextNode();
         });
     }
@@ -238,7 +276,6 @@ public class MainActivity extends Activity {
                 }
             }
 
-            // 还原：清爽简约的成功/跳过日志
             if (validCount > 0) {
                 successfulIps.add(currentIp);
                 log("   [成功] 提取 " + validCount + " 个源。进度: " + successfulIps.size() + "/" + MAX_IP_COUNT);
@@ -314,7 +351,6 @@ public class MainActivity extends Activity {
                 }
             }
 
-            // 核心解密：Base64 兜底解码
             try {
                 String padded = encodedPart.trim().replaceAll("=$", "");
                 while (padded.length() % 4 != 0) padded += "=";
