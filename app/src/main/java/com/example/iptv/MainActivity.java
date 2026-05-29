@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
     private TextView tvLog;
     private Button btnStart;
     private EditText etKeyword;
-    private EditText etIpFilter; // 新增过滤器控件
+    private EditText etIpFilter; 
 
     private static final String BASE_URL = "https://tonkiang.us/";
     private static final String SEARCH_URL = BASE_URL + "iptvmulticast.php";
@@ -54,10 +54,15 @@ public class MainActivity extends Activity {
     private List<String> m3uResults = new ArrayList<>();
     private List<String> successfulIps = new ArrayList<>();
     private String currentKeyword = "";
-    private String ipFilterInput = ""; // 存放过滤器输入
+    private String ipFilterInput = ""; 
 
     private String nextPageUrl = "";
     private int currentPage = 1;
+
+    // 解析后的全局过滤器变量
+    private boolean isWhitelistMode = false;
+    private List<String> whitelistIps = new ArrayList<>();
+    private List<String> blacklistIps = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,13 +73,13 @@ public class MainActivity extends Activity {
         tvLog = findViewById(R.id.tvLog);
         btnStart = findViewById(R.id.btnStart);
         etKeyword = findViewById(R.id.etKeyword);
-        etIpFilter = findViewById(R.id.etIpFilter); // 初始化
+        etIpFilter = findViewById(R.id.etIpFilter); 
 
         setupWebView();
 
         btnStart.setOnClickListener(v -> {
             currentKeyword = etKeyword.getText().toString().trim();
-            ipFilterInput = etIpFilter.getText().toString().trim(); // 获取过滤条件
+            ipFilterInput = etIpFilter.getText().toString().trim(); 
             
             if (currentKeyword.isEmpty()) {
                 Toast.makeText(this, "请输入关键字", Toast.LENGTH_SHORT).show();
@@ -89,6 +94,24 @@ public class MainActivity extends Activity {
             currentPage = 1;
             nextPageUrl = "";
             isSearching = true;
+
+            // 预解析过滤器规则
+            isWhitelistMode = false;
+            whitelistIps.clear();
+            blacklistIps.clear();
+
+            if (!ipFilterInput.isEmpty()) {
+                String[] parts = ipFilterInput.split(",");
+                for (String p : parts) {
+                    String cleanIp = p.trim();
+                    if (cleanIp.startsWith("-")) {
+                        blacklistIps.add(cleanIp.substring(1).trim()); // 排除名单
+                    } else {
+                        isWhitelistMode = true;
+                        whitelistIps.add(cleanIp); // 仅保留名单
+                    }
+                }
+            }
             
             log("1. 正在启动浏览器...");
             webView.loadUrl(SEARCH_URL);
@@ -144,24 +167,6 @@ public class MainActivity extends Activity {
             Document doc = Jsoup.parse(cleanHtml, webView.getUrl()); 
             Elements results = doc.select("div.result");
 
-            // 解析过滤器规则
-            boolean isWhitelistMode = false;
-            List<String> whitelistIps = new ArrayList<>();
-            List<String> blacklistIps = new ArrayList<>();
-
-            if (!ipFilterInput.isEmpty()) {
-                String[] parts = ipFilterInput.split(",");
-                for (String p : parts) {
-                    String cleanIp = p.trim();
-                    if (cleanIp.startsWith("-")) {
-                        blacklistIps.add(cleanIp.substring(1).trim()); // 排除名单
-                    } else {
-                        isWhitelistMode = true;
-                        whitelistIps.add(cleanIp); // 仅保留名单
-                    }
-                }
-            }
-
             for (Element item : results) {
                 Element statusDiv = item.selectFirst("div[style*='float: right']");
                 if (statusDiv != null && statusDiv.text().contains("暂时失效")) continue;
@@ -171,18 +176,13 @@ public class MainActivity extends Activity {
                     String absUrl = aTag.absUrl("href");
                     String nodeIp = extractIpFromUrl(absUrl);
 
-                    // 执行 IP 智能过滤
-                    if (isWhitelistMode) {
-                        if (!whitelistIps.contains(nodeIp)) {
-                            continue; // 跳过不在白名单里的 IP
-                        }
-                    } else {
-                        if (blacklistIps.contains(nodeIp)) {
-                            log("   [排除] 黑名单跳过 IP: " + nodeIp);
-                            continue; // 跳过黑名单里的 IP
-                        }
+                    // 【第一重过滤：外皮过滤】如果是黑名单里的外部IP，直接不加载它，节省时间
+                    if (!isWhitelistMode && blacklistIps.contains(nodeIp)) {
+                        log("   [过滤] 外部黑名单直接跳过 IP: " + nodeIp);
+                        continue; 
                     }
 
+                    // 注意：白名单模式下，外部IP不匹配时不直接跳过，因为可能点进去解密后内部IP匹配！
                     nodeUrlsToParse.add(absUrl);
                 }
             }
@@ -245,7 +245,6 @@ public class MainActivity extends Activity {
                 if (channelName.toUpperCase().endsWith("SD")) continue;
 
                 String proxyUrl = "";
-                
                 for (Element a : item.select("a[href]")) {
                     if (!a.attr("href").contains("channellist")) {
                         proxyUrl = a.attr("href");
@@ -265,6 +264,23 @@ public class MainActivity extends Activity {
                     String rawStreamUrl = decodeStreamUrl(proxyUrl, currentIp);
                     if (rawStreamUrl.startsWith("http") && !rawStreamUrl.contains("zqjy.info")) {
                         
+                        // 提取解密后直连源里的“真实播放IP（内芯IP）”
+                        String realStreamIp = extractIpFromStreamUrl(rawStreamUrl);
+
+                        // 【第二重过滤：内芯深度过滤】
+                        if (isWhitelistMode) {
+                            // 白名单模式：只有当外部IP匹配，或者直连流的真实IP匹配时，才保留该流
+                            if (!whitelistIps.contains(currentIp) && !whitelistIps.contains(realStreamIp)) {
+                                continue; 
+                            }
+                        } else {
+                            // 黑名单模式：如果直连流的真实IP在黑名单里，直接丢弃！
+                            if (blacklistIps.contains(realStreamIp)) {
+                                continue;
+                            }
+                        }
+
+                        // 【去重判定】
                         String uniqueKey = channelName + "_" + rawStreamUrl;
                         if (uniqueKeys.contains(uniqueKey)) continue;
                         uniqueKeys.add(uniqueKey);
@@ -328,6 +344,16 @@ public class MainActivity extends Activity {
         return matcher.find() ? matcher.group(1) : "未知IP";
     }
 
+    // 新增辅助方法：提取直连播放流里的真实 IP
+    private String extractIpFromStreamUrl(String streamUrl) {
+        try {
+            Matcher matcher = Pattern.compile("https?://([^:/]+)").matcher(streamUrl);
+            return matcher.find() ? matcher.group(1) : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private String decodeStreamUrl(String proxyUrl, String finalIp) {
         try {
             if (!proxyUrl.contains("/tv/")) return proxyUrl;
@@ -351,6 +377,7 @@ public class MainActivity extends Activity {
                 }
             }
 
+            // 核心解密：Base64 兜底解码
             try {
                 String padded = encodedPart.trim().replaceAll("=$", "");
                 while (padded.length() % 4 != 0) padded += "=";
